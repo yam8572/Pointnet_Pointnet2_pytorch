@@ -9,10 +9,12 @@ from pointnet_utils import STN3d, STNkd, feature_transform_reguliarzer
 class get_model(nn.Module):
     def __init__(self, part_num=50, normal_channel=True):
         super(get_model, self).__init__()
+        # 是否有法向量信息
         if normal_channel:
             channel = 6
         else:
             channel = 3
+        # 部件類別數量 ShapeNet中為50(部件) 類別:16*每類部件數約3 = 50
         self.part_num = part_num
         self.stn = STN3d(channel)
         self.conv1 = torch.nn.Conv1d(channel, 64, 1)
@@ -20,16 +22,19 @@ class get_model(nn.Module):
         self.conv3 = torch.nn.Conv1d(128, 128, 1)
         self.conv4 = torch.nn.Conv1d(128, 512, 1)
         self.conv5 = torch.nn.Conv1d(512, 2048, 1)
+
         self.bn1 = nn.BatchNorm1d(64)
         self.bn2 = nn.BatchNorm1d(128)
         self.bn3 = nn.BatchNorm1d(128)
         self.bn4 = nn.BatchNorm1d(512)
         self.bn5 = nn.BatchNorm1d(2048)
-        self.fstn = STNkd(k=128)
+        self.fstn = STNkd(k=128) # 維度為128
+
         self.convs1 = torch.nn.Conv1d(4944, 256, 1)
         self.convs2 = torch.nn.Conv1d(256, 256, 1)
         self.convs3 = torch.nn.Conv1d(256, 128, 1)
         self.convs4 = torch.nn.Conv1d(128, part_num, 1)
+
         self.bns1 = nn.BatchNorm1d(256)
         self.bns2 = nn.BatchNorm1d(256)
         self.bns3 = nn.BatchNorm1d(128)
@@ -57,12 +62,12 @@ class get_model(nn.Module):
 
         out4 = F.relu(self.bn4(self.conv4(net_transformed)))
         out5 = self.bn5(self.conv5(out4))
-        out_max = torch.max(out5, 2, keepdim=True)[0]
+        out_max = torch.max(out5, 2, keepdim=True)[0] # max 後為2048個元素
         out_max = out_max.view(-1, 2048)
 
         out_max = torch.cat([out_max,label.squeeze(1)],1)
-        expand = out_max.view(-1, 2048+16, 1).repeat(1, 1, N)
-        concat = torch.cat([expand, out1, out2, out3, out4, out5], 1)
+        expand = out_max.view(-1, 2048+16, 1).repeat(1, 1, N) # 16個物體類別
+        concat = torch.cat([expand, out1, out2, out3, out4, out5], 1) # 局部特徵與全局特徵拼接
         net = F.relu(self.bns1(self.convs1(concat)))
         net = F.relu(self.bns2(self.convs2(net)))
         net = F.relu(self.bns3(self.convs3(net)))

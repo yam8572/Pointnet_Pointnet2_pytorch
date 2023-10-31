@@ -9,8 +9,10 @@ from pointnet_utils import PointNetEncoder, feature_transform_reguliarzer
 class get_model(nn.Module):
     def __init__(self, num_class):
         super(get_model, self).__init__()
-        self.k = num_class
-        self.feat = PointNetEncoder(global_feat=False, feature_transform=True, channel=9)
+        self.k = num_class # 類別數
+        # lobal_feat=False >> 返回局部特徵與全局特徵的拼接 x=展平的全局特徵 pointfeat=局部特徵
+        # return torch.cat([x, pointfeat], 1), trans, trans_feat
+        self.feat = PointNetEncoder(global_feat=False, feature_transform=True, channel=9) 
         self.conv1 = torch.nn.Conv1d(1088, 512, 1)
         self.conv2 = torch.nn.Conv1d(512, 256, 1)
         self.conv3 = torch.nn.Conv1d(256, 128, 1)
@@ -39,6 +41,7 @@ class get_loss(torch.nn.Module):
 
     def forward(self, pred, target, trans_feat, weight):
         loss = F.nll_loss(pred, target, weight = weight)
+        # 特徵變換正則化損失
         mat_diff_loss = feature_transform_reguliarzer(trans_feat)
         total_loss = loss + mat_diff_loss * self.mat_diff_loss_scale
         return total_loss

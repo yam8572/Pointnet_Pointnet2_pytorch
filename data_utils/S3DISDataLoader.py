@@ -5,6 +5,7 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 
 
+# S3DIS: 訓練語意分割 6個area ，每個area內有多個 room，room 切分成1*1平方米的block，每個方塊採樣4096個點
 class S3DISDataset(Dataset):
     def __init__(self, split='train', data_root='trainval_fullarea', num_point=4096, test_area=5, block_size=1.0, sample_rate=1.0, transform=None):
         super().__init__()
@@ -51,6 +52,7 @@ class S3DISDataset(Dataset):
         labels = self.room_labels[room_idx]   # N
         N_points = points.shape[0]
 
+        # 對每個 block 做抽取
         while (True):
             center = points[np.random.choice(N_points)][:3]
             block_min = center - [self.block_size / 2.0, self.block_size / 2.0, 0]
@@ -59,6 +61,7 @@ class S3DISDataset(Dataset):
             if point_idxs.size > 1024:
                 break
 
+        # random select 4096 points
         if point_idxs.size >= self.num_point:
             selected_point_idxs = np.random.choice(point_idxs, self.num_point, replace=False)
         else:
@@ -72,7 +75,7 @@ class S3DISDataset(Dataset):
         current_points[:, 8] = selected_points[:, 2] / self.room_coord_max[room_idx][2]
         selected_points[:, 0] = selected_points[:, 0] - center[0]
         selected_points[:, 1] = selected_points[:, 1] - center[1]
-        selected_points[:, 3:6] /= 255.0
+        selected_points[:, 3:6] /= 255.0 # 0-255 顏色做歸一化
         current_points[:, 0:6] = selected_points
         current_labels = labels[selected_point_idxs]
         if self.transform is not None:

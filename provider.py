@@ -1,5 +1,7 @@
+# data pre-procress 數據預處理
 import numpy as np
 
+# 規一化 normalize batch data，使用以 centroid 為中心的塊座標 coordinates of the block
 def normalize_data(batch_data):
     """ Normalize the batch data, use coordinates of the block centered at origin,
         Input:
@@ -11,14 +13,15 @@ def normalize_data(batch_data):
     normal_data = np.zeros((B, N, C))
     for b in range(B):
         pc = batch_data[b]
+        # 中心點
         centroid = np.mean(pc, axis=0)
         pc = pc - centroid
         m = np.max(np.sqrt(np.sum(pc ** 2, axis=1)))
-        pc = pc / m
+        pc = pc / m # divid to radius to normalize 除以半徑做規一化
         normal_data[b] = pc
     return normal_data
 
-
+# 打亂數據(有相應標籤)
 def shuffle_data(data, labels):
     """ Shuffle data and labels.
         Input:
@@ -27,10 +30,13 @@ def shuffle_data(data, labels):
         Return:
           shuffled data, label and shuffle indices
     """
+    # arange 創建等差數列，0到最大值(label的編號)
     idx = np.arange(len(labels))
+    # 隨機打亂 index
     np.random.shuffle(idx)
     return data[idx, ...], labels[idx], idx
 
+# 打亂每個點云中的點順序，用於更改FPS行為。對整個batch 使用相同的打亂索引idx
 def shuffle_points(batch_data):
     """ Shuffle orders of points in each point cloud -- changes FPS behavior.
         Use the same shuffling idx for the entire batch.
@@ -39,10 +45,14 @@ def shuffle_points(batch_data):
         Output:
             BxNxC array
     """
+    # arange 創建等差數列，0到最大值(batch_data.shape[1])
     idx = np.arange(batch_data.shape[1])
+    # 隨機打亂 index
     np.random.shuffle(idx)
+    # return 打亂後數據
     return batch_data[:,idx,:]
 
+# 隨機旋轉點雲進行數據集增廣，每個形狀向上方旋轉
 def rotate_point_cloud(batch_data):
     """ Randomly rotate the point clouds to augument the dataset
         rotation is per shape based along up direction
@@ -51,18 +61,25 @@ def rotate_point_cloud(batch_data):
         Return:
           BxNx3 array, rotated batch of point clouds
     """
+    # 根據 batch_data 的矩陣結構，構造一個元素都是0的矩陣
     rotated_data = np.zeros(batch_data.shape, dtype=np.float32)
     for k in range(batch_data.shape[0]):
+        # 產生0~1之間的隨機數 * 2 * np.pi >> 得到一個角度
         rotation_angle = np.random.uniform() * 2 * np.pi
+        # 求此角度的 cos 和 sin
         cosval = np.cos(rotation_angle)
         sinval = np.sin(rotation_angle)
+        # 組成一個3*3的旋轉矩陣
         rotation_matrix = np.array([[cosval, 0, sinval],
                                     [0, 1, 0],
                                     [-sinval, 0, cosval]])
+        # 一個shape_pc內是把batch_data切分成多個元素的數組
         shape_pc = batch_data[k, ...]
+        # 旋轉點雲數據，乘上旋轉矩陣
         rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
     return rotated_data
 
+# 旋轉具有法向量信息的點雲做數據增強
 def rotate_point_cloud_z(batch_data):
     """ Randomly rotate the point clouds to augument the dataset
         rotation is per shape based along up direction
@@ -80,9 +97,10 @@ def rotate_point_cloud_z(batch_data):
                                     [-sinval, cosval, 0],
                                     [0, 0, 1]])
         shape_pc = batch_data[k, ...]
-        rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
+        rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix) # 法向量也需旋轉故*rotation_matrix
     return rotated_data
 
+# 通過小的旋轉隨機擾動點雲
 def rotate_point_cloud_with_normal(batch_xyz_normal):
     ''' Randomly rotate XYZ, normal point cloud.
         Input:
@@ -103,6 +121,7 @@ def rotate_point_cloud_with_normal(batch_xyz_normal):
         batch_xyz_normal[k,:,3:6] = np.dot(shape_normal.reshape((-1, 3)), rotation_matrix)
     return batch_xyz_normal
 
+# 小的旋轉 值不能太大 angle_sigma
 def rotate_perturbation_point_cloud_with_normal(batch_data, angle_sigma=0.06, angle_clip=0.18):
     """ Randomly perturb the point clouds by small rotations
         Input:
@@ -129,7 +148,7 @@ def rotate_perturbation_point_cloud_with_normal(batch_data, angle_sigma=0.06, an
         rotated_data[k,:,3:6] = np.dot(shape_normal.reshape((-1, 3)), R)
     return rotated_data
 
-
+# 將點雲延向上方向旋轉一定角度
 def rotate_point_cloud_by_angle(batch_data, rotation_angle):
     """ Rotate the point cloud along up direction with certain angle.
         Input:
@@ -149,6 +168,7 @@ def rotate_point_cloud_by_angle(batch_data, rotation_angle):
         rotated_data[k,:,0:3] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
     return rotated_data
 
+# 將具有法向量信息的點雲延向上方向旋轉一定角度
 def rotate_point_cloud_by_angle_with_normal(batch_data, rotation_angle):
     """ Rotate the point cloud along up direction with certain angle.
         Input:
@@ -167,8 +187,8 @@ def rotate_point_cloud_by_angle_with_normal(batch_data, rotation_angle):
                                     [-sinval, 0, cosval]])
         shape_pc = batch_data[k,:,0:3]
         shape_normal = batch_data[k,:,3:6]
-        rotated_data[k,:,0:3] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
-        rotated_data[k,:,3:6] = np.dot(shape_normal.reshape((-1,3)), rotation_matrix)
+        rotated_data[k,:,0:3] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix) 
+        rotated_data[k,:,3:6] = np.dot(shape_normal.reshape((-1,3)), rotation_matrix) # 法向量也需旋轉故*rotation_matrix
     return rotated_data
 
 
@@ -197,7 +217,7 @@ def rotate_perturbation_point_cloud(batch_data, angle_sigma=0.06, angle_clip=0.1
         rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), R)
     return rotated_data
 
-
+# 隨機抖動點。抖動是針對每個點
 def jitter_point_cloud(batch_data, sigma=0.01, clip=0.05):
     """ Randomly jitter points. jittering is per point.
         Input:
@@ -207,6 +227,7 @@ def jitter_point_cloud(batch_data, sigma=0.01, clip=0.05):
     """
     B, N, C = batch_data.shape
     assert(clip > 0)
+    # 把正負 clip 間的正態分佈的隨機數加到 batch_data
     jittered_data = np.clip(sigma * np.random.randn(B, N, C), -1*clip, clip)
     jittered_data += batch_data
     return jittered_data

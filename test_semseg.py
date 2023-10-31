@@ -19,28 +19,34 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 
+# 13個類別
 classes = ['ceiling', 'floor', 'wall', 'beam', 'column', 'window', 'door', 'table', 'chair', 'sofa', 'bookcase',
            'board', 'clutter']
+# 字典
 class2label = {cls: i for i, cls in enumerate(classes)}
 seg_classes = class2label
 seg_label_to_cat = {}
 for i, cat in enumerate(seg_classes.keys()):
+    # cat copy to seg_label_to_cat
     seg_label_to_cat[i] = cat
 
-
+# k-fold 交叉驗證: 6fold: 訓練集5個區域，測試集1個區域，防止過擬合的常用手段 
+# ram 顯存不夠，調降batch_size 或 npoint
 def parse_args():
     '''PARAMETERS'''
     parser = argparse.ArgumentParser('Model')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in testing [default: 32]')
     parser.add_argument('--gpu', type=str, default='0', help='specify gpu device')
+    # 切成 1 * 1 block 後採樣 的 4096點
     parser.add_argument('--num_point', type=int, default=4096, help='point number [default: 4096]')
     parser.add_argument('--log_dir', type=str, required=True, help='experiment root')
     parser.add_argument('--visual', action='store_true', default=False, help='visualize result [default: False]')
+    # 第五區測試，其他訓練 
     parser.add_argument('--test_area', type=int, default=5, help='area for testing, option: 1-6 [default: 5]')
     parser.add_argument('--num_votes', type=int, default=3, help='aggregate segmentation scores with voting [default: 5]')
     return parser.parse_args()
 
-
+# 投票機制
 def add_vote(vote_label_pool, point_idx, pred_label, weight):
     B = pred_label.shape[0]
     N = pred_label.shape[1]
@@ -87,11 +93,14 @@ def main(args):
     '''MODEL LOADING'''
     model_name = os.listdir(experiment_dir + '/logs')[0].split('.')[0]
     MODEL = importlib.import_module(model_name)
+    # 加載模型
     classifier = MODEL.get_model(NUM_CLASSES).cuda()
     checkpoint = torch.load(str(experiment_dir) + '/checkpoints/best_model.pth')
+    # 透過 checkpoint 去 load_state_dict 試 classifier
     classifier.load_state_dict(checkpoint['model_state_dict'])
     classifier = classifier.eval()
 
+    # 開始測試
     with torch.no_grad():
         scene_id = TEST_DATASET_WHOLE_SCENE.file_list
         scene_id = [x[:-4] for x in scene_id]
@@ -103,18 +112,21 @@ def main(args):
 
         log_string('---- EVALUATION WHOLE SCENE----')
 
+        # 透過 batch 進行迭代
         for batch_idx in range(num_batches):
             print("Inference [%d/%d] %s ..." % (batch_idx + 1, num_batches, scene_id[batch_idx]))
             total_seen_class_tmp = [0 for _ in range(NUM_CLASSES)]
             total_correct_class_tmp = [0 for _ in range(NUM_CLASSES)]
             total_iou_deno_class_tmp = [0 for _ in range(NUM_CLASSES)]
             if args.visual:
+                # predict 和 ground truth 保存成 .obj (點雲的一種格式)
                 fout = open(os.path.join(visual_dir, scene_id[batch_idx] + '_pred.obj'), 'w')
                 fout_gt = open(os.path.join(visual_dir, scene_id[batch_idx] + '_gt.obj'), 'w')
 
             whole_scene_data = TEST_DATASET_WHOLE_SCENE.scene_points_list[batch_idx]
             whole_scene_label = TEST_DATASET_WHOLE_SCENE.semantic_labels_list[batch_idx]
             vote_label_pool = np.zeros((whole_scene_label.shape[0], NUM_CLASSES))
+            # 迭代多個投票
             for _ in tqdm(range(args.num_votes), total=args.num_votes):
                 scene_data, scene_label, scene_smpw, scene_point_index = TEST_DATASET_WHOLE_SCENE[batch_idx]
                 num_blocks = scene_data.shape[0]
@@ -138,15 +150,19 @@ def main(args):
                     torch_data = torch.Tensor(batch_data)
                     torch_data = torch_data.float().cuda()
                     torch_data = torch_data.transpose(2, 1)
+                    # classifier推理得到預測值
                     seg_pred, _ = classifier(torch_data)
                     batch_pred_label = seg_pred.contiguous().cpu().data.max(2)[1].numpy()
 
+                    # 紀錄本次推理結果
                     vote_label_pool = add_vote(vote_label_pool, batch_point_index[0:real_batch_size, ...],
                                                batch_pred_label[0:real_batch_size, ...],
                                                batch_smpw[0:real_batch_size, ...])
 
+            # 多個vote迭代後 最終投票(最大值)
             pred_label = np.argmax(vote_label_pool, 1)
 
+            # 性能統計
             for l in range(NUM_CLASSES):
                 total_seen_class_tmp[l] += np.sum((whole_scene_label == l))
                 total_correct_class_tmp[l] += np.sum((pred_label == l) & (whole_scene_label == l))
@@ -168,6 +184,7 @@ def main(args):
                     pl_save.write(str(int(i)) + '\n')
                 pl_save.close()
             for i in range(whole_scene_label.shape[0]):
+                # 可視化著色
                 color = g_label2color[pred_label[i]]
                 color_gt = g_label2color[whole_scene_label[i]]
                 if args.visual:
@@ -182,6 +199,7 @@ def main(args):
                 fout.close()
                 fout_gt.close()
 
+        # 紀錄性能到日誌中
         IoU = np.array(total_correct_class) / (np.array(total_iou_deno_class, dtype=np.float) + 1e-6)
         iou_per_class_str = '------- IoU --------\n'
         for l in range(NUM_CLASSES):
