@@ -6,6 +6,77 @@ from torch.autograd import Variable
 import numpy as np
 import torch.nn.functional as F
 
+# used in MAML to forward input with fast weight
+# 快速權重是 MAML 中的概念，用於快速適應模型參數
+# 新增了 self.weight.fast 和 self.bias.fast 屬性，這些屬性用於暫時儲存快速權重
+class Linear_fw(nn.Linear):  
+    def __init__(self, in_features, out_features):
+        super(Linear_fw, self).__init__(in_features, out_features)
+        self.weight.fast = None  # Lazy hack to add fast weight link 添加快速權重鏈結
+        self.bias.fast = None
+
+    def forward(self, x):
+        # 是否存在快速權重 weight.fast 和 bias.fast，
+        # 如果存在，它將使用這些快速權重進行前向傳遞。 
+        # 否則，它將使用原始的 weight 和 bias 進行傳遞。
+        if self.weight.fast is not None and self.bias.fast is not None:
+            # weight.fast (fast weight) is the temporaily adapted weight
+            out = F.linear(x, self.weight.fast, self.bias.fast)
+        else:
+            out = super(Linear_fw, self).forward(x)
+        return out
+# 用於在MAML中前向傳遞輸入並使用快速權重的1D卷積層    
+class Conv1d_fw(nn.Conv1d):  # used in MAML to forward input with fast weight
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
+        super(Conv1d_fw, self).__init__(in_channels, out_channels,
+                                        kernel_size, stride=stride, padding=padding, bias=bias)
+        self.weight.fast = None
+        if not self.bias is None:
+            self.bias.fast = None
+
+    def forward(self, x):
+        if self.bias is None:
+            if self.weight.fast is not None:
+                out = F.conv1d(x, self.weight.fast, None,
+                               stride=self.stride, padding=self.padding)
+            else:
+                # 使用原始的 weight 和 bias 進行傳遞。
+                out = super(Conv1d_fw, self).forward(x)
+        else:
+            if self.weight.fast is not None and self.bias.fast is not None:
+                # 使用這些快速權重進行前向傳遞
+                out = F.conv1d(x, self.weight.fast, self.bias.fast,
+                               stride=self.stride, padding=self.padding)
+            else:
+                # 使用原始的 weight 和 bias 進行傳遞。
+                out = super(Conv1d_fw, self).forward(x)
+
+        return out
+
+
+# used in MAML to forward input with fast weight
+class BatchNorm1d_fw(nn.BatchNorm1d):
+    def __init__(self, num_features):
+        super(BatchNorm1d_fw, self).__init__(num_features)
+        self.weight.fast = None
+        self.bias.fast = None
+
+    def forward(self, x):
+        # 建立了 running_mean 和 running_var，它們分別是全零和全一的張量，
+        # 並使用 .cuda() 將它們移到 GPU 上，以確保與輸入資料具有相同的維度。
+        running_mean = torch.zeros(x.data.size()[1]).cuda()
+        running_var = torch.ones(x.data.size()[1]).cuda()
+        if self.weight.fast is not None and self.bias.fast is not None:
+            # 使用原始的權重 self.weight 和偏置 self.bias 進行批量標準化。
+            out = F.batch_norm(x, running_mean, running_var, self.weight.fast,
+                               self.bias.fast, training=True, momentum=1)
+            # batch_norm momentum hack: follow hack of Kate Rakelly in pytorch-maml/src/layers.py
+        else:
+            # 使用原始的 weight 和 bias 進行批量標準化。
+            out = F.batch_norm(x, running_mean, running_var,
+                               self.weight, self.bias, training=True, momentum=1)
+        return out
+
 # STN3D:T-Net 3*3 transform
 # 類似一個 mini-pointnet
 class STN3d(nn.Module):
@@ -54,21 +125,37 @@ class STN3d(nn.Module):
 
 # STNkd:T-Net 64*64 transform, k默認是64 (和STN3D唯一不同是STN3D的in_channel=3or6; STNkd=k=64)
 class STNkd(nn.Module):
+    maml = False
     def __init__(self, k=64):
         super(STNkd, self).__init__()
-        self.conv1 = torch.nn.Conv1d(k, 64, 1)
-        self.conv2 = torch.nn.Conv1d(64, 128, 1)
-        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
-        self.fc1 = nn.Linear(1024, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, k * k)
-        self.relu = nn.ReLU()
+        if self.maml:
+            self.conv1 = Conv1d_fw(k, 64, 1)
+            self.conv2 = Conv1d_fw(64, 128, 1)
+            self.conv3 = Conv1d_fw(128, 1024, 1)
+            self.fc1 = Linear_fw(1024, 512)
+            self.fc2 = Linear_fw(512, 256)
+            self.fc3 = Linear_fw(256, k * k)
+            self.relu = nn.ReLU()
 
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.bn3 = nn.BatchNorm1d(1024)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.bn5 = nn.BatchNorm1d(256)
+            self.bn1 = BatchNorm1d_fw(64)
+            self.bn2 = BatchNorm1d_fw(128)
+            self.bn3 = BatchNorm1d_fw(1024)
+            self.bn4 = BatchNorm1d_fw(512)
+            self.bn5 = BatchNorm1d_fw(256)
+        else:
+            self.conv1 = torch.nn.Conv1d(k, 64, 1)
+            self.conv2 = torch.nn.Conv1d(64, 128, 1)
+            self.conv3 = torch.nn.Conv1d(128, 1024, 1)
+            self.fc1 = nn.Linear(1024, 512)
+            self.fc2 = nn.Linear(512, 256)
+            self.fc3 = nn.Linear(256, k * k)
+            self.relu = nn.ReLU()
+
+            self.bn1 = nn.BatchNorm1d(64)
+            self.bn2 = nn.BatchNorm1d(128)
+            self.bn3 = nn.BatchNorm1d(1024)
+            self.bn4 = nn.BatchNorm1d(512)
+            self.bn5 = nn.BatchNorm1d(256)
 
         self.k = k
 
@@ -98,17 +185,26 @@ class STNkd(nn.Module):
 
 # PointNet編碼器
 class PointNetEncoder(nn.Module):
+    maml = False
     # global_feat:是否要做全局特徵 feature_transform:是否需做特徵轉換 in_channel default=3(X,Y,Z)
     def __init__(self, global_feat=True, feature_transform=False, channel=3):
         super(PointNetEncoder, self).__init__()
         # STN3D:T-Net 3*3 transform
         self.stn = STN3d(channel)
-        self.conv1 = torch.nn.Conv1d(channel, 64, 1)
-        self.conv2 = torch.nn.Conv1d(64, 128, 1)
-        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.bn3 = nn.BatchNorm1d(1024)
+        if self.maml:
+            self.conv1 = Conv1d_fw(channel, 64, 1)
+            self.conv2 = Conv1d_fw(64, 128, 1)
+            self.conv3 = Conv1d_fw(128, 1024, 1)
+            self.bn1 = BatchNorm1d_fw(64)
+            self.bn2 = BatchNorm1d_fw(128)
+            self.bn3 = BatchNorm1d_fw(1024)
+        else:
+            self.conv1 = torch.nn.Conv1d(channel, 64, 1)
+            self.conv2 = torch.nn.Conv1d(64, 128, 1)
+            self.conv3 = torch.nn.Conv1d(128, 1024, 1)
+            self.bn1 = nn.BatchNorm1d(64)
+            self.bn2 = nn.BatchNorm1d(128)
+            self.bn3 = nn.BatchNorm1d(1024)
         self.global_feat = global_feat
         self.feature_transform = feature_transform
         # 若需做特徵轉換

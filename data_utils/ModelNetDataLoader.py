@@ -58,8 +58,10 @@ class ModelNetDataLoader(Dataset):
         if self.num_category == 10:
             self.catfile = os.path.join(self.root, 'modelnet10_shape_names.txt')
         else:
+            # self.root = data/modelnet40_normal_resampled/
+            # self.catfile = data/modelnet40_normal_resampled/modelnet40_shape_names.txt
             self.catfile = os.path.join(self.root, 'modelnet40_shape_names.txt')
-
+        # self.cat = self.cat ['airplane', 'bathtub', 'bed', 'bench', 'bookshelf', 'bottle', 'bowl', 'car', 'chair', 'cone', 'cup', 'curtain', 'desk', 'door', 'dresser', 'flower_pot', 'glass_box', 'guitar', 'keyboard', 'lamp', 'laptop', 'mantel', 'monitor', 'night_stand', 'person', 'piano', 'plant', 'radio', 'range_hood', 'sink', 'sofa', 'stairs', 'stool', 'table', 'tent', 'toilet', 'tv_stand', 'vase', 'wardrobe', 'xbox']
         self.cat = [line.rstrip() for line in open(self.catfile)]
         self.classes = dict(zip(self.cat, range(len(self.cat))))
 
